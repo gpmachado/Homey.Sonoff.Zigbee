@@ -4,7 +4,7 @@
     "en": "ZBMINI-R2 Switch",
     "sv": "ZBMINI-R2 Strömbrytare"
   },
-  "class": "other",
+  "class": "socket",
   "capabilities": [
     "onoff"
   ],
