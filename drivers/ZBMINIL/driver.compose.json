@@ -4,7 +4,7 @@
     "en": "ZBMINI-L Switch",
     "sv": "ZBMINI-L Strömbrytare"
   },
-  "class": "light",
+  "class": "other",
   "capabilities": [
     "onoff"
   ],
