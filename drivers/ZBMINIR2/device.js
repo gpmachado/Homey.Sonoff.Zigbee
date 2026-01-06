@@ -11,6 +11,17 @@ Cluster.addCluster(SonoffCluster);
 
 const SonoffBase = require('../sonoffbase');
 
+/**
+ * Bound OnOff cluster used when Detach Relay mode is enabled.
+ *
+ * In Detach Relay mode, the physical button does NOT change the relay state
+ * and does NOT send onOff attribute reports.
+ * Instead, the device sends ZCL commands (e.g. "toggle") which are interpreted
+ * as button events and mapped to Homey Flow triggers.
+ *
+ * This behavior is expected and the absence of onOff state updates
+ * or ZCL response errors in the log should NOT be treated as a malfunction.
+ */
 class MyOnOffBoundCluster extends BoundCluster {
     constructor(node) {
         super();
@@ -18,7 +29,7 @@ class MyOnOffBoundCluster extends BoundCluster {
         this._click = node.homey.flow.getDeviceTriggerCard("ZBMINIR2:click");
     }
     toggle() {
-        this._click.trigger(this.node, {}, {}).catch(this.node.error);
+        this._click.trigger(this.node, {}, {}).catch(() => {});
     }
 }
 
