@@ -43,7 +43,7 @@ const TURBO_MODE_VALUES = {
 class SonoffZBMINIR2 extends SonoffBase {
 
     /**
-     * onInit is called when the device is initialized.
+     * onNodeInit is called when the device is initialized.
      */
     async onNodeInit({ zclNode }) {
         
@@ -98,6 +98,15 @@ class SonoffZBMINIR2 extends SonoffBase {
         }
         // Any other value (including 0x09/9) is considered "off"
         return false;
+    }
+
+    /**
+     * Convert boolean to TurboMode raw value (radioPower)
+     * @param {boolean} enabled - Desired turbo mode state
+     * @returns {number} Value to send to device (9 or 20)
+     */
+    _formatTurboMode(enabled) {
+        return enabled ? TURBO_MODE_VALUES.ON : TURBO_MODE_VALUES.OFF;
     }
 
     /**
