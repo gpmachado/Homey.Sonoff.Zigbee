@@ -18,3 +18,5 @@ Support devices:
 -Sonoff ZBMINI-L (Switch)
 -Sonoff ZBMINI-L2 (Switch)
 -Sonoff RF/TX devices (send and receive)
+-Sonoff ZBMINI-R2 (Switch)
+-Sonoff BASICZBR3 (Switch)
