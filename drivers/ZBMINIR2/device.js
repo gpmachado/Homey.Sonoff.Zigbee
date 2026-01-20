@@ -18,9 +18,6 @@ const SonoffBase = require('../sonoffbase');
  * and does NOT send onOff attribute reports.
  * Instead, the device sends ZCL commands (e.g. "toggle") which are interpreted
  * as button events and mapped to Homey Flow triggers.
- *
- * This behavior is expected and the absence of onOff state updates
- * or ZCL response errors in the log should NOT be treated as a malfunction.
  */
 class MyOnOffBoundCluster extends BoundCluster {
     constructor(node) {
@@ -28,10 +25,18 @@ class MyOnOffBoundCluster extends BoundCluster {
         this.node = node;
         this._click = node.homey.flow.getDeviceTriggerCard("ZBMINIR2:click");
     }
+    
+    /**
+     * Handle toggle command from physical switch
+     * In detached mode, physical switch sends toggle commands without changing relay state
+     */
     toggle() {
-        this._click.trigger(this.node, {}, {}).catch(() => {});
+        this.node.log('Detach Mode: Physical switch toggled, triggering Flow Card');
+        this._click.trigger(this.node, {}, {})
+            .catch(err => this.node.error('Failed to trigger click flow:', err));
     }
 }
+
 
 // SonoffCluster attributes list
 const SonoffClusterAttributes = [
@@ -39,13 +44,11 @@ const SonoffClusterAttributes = [
     'network_led',
     'power_on_delay_state',
     'power_on_delay_time',
-    'switch_mode',  // Needs string → number conversion
+    'switch_mode',
     'detach_mode'
 ];
 
 // TurboMode constants (radioPower attribute in Zigbee2MQTT)
-// Attribute type: ZCLDataTypes.int16 (signed 16-bit integer)
-// Based on Z2M: valueOff: [false, 0x09], valueOn: [true, 0x14]
 const TURBO_MODE_VALUES = {
     OFF: 9,   // 0x09 - normal radio power
     ON: 20    // 0x14 - turbo radio power (extended range)
@@ -65,23 +68,74 @@ class SonoffZBMINIR2 extends SonoffBase {
         }
 
         // Configure attribute reporting for on/off state
-        this.configureAttributeReporting([			
+        this.configureAttributeReporting([
             {
                 endpointId: 1,
                 cluster: CLUSTER.ON_OFF,
                 attributeName: 'onOff',
                 minInterval: 0,
-                maxInterval: 3600                
+                maxInterval: 3600
             }
         ]).catch(this.error);
 
-        // Bind toggle command trigger
+        // Bind toggle command trigger for detached relay mode
         this.zclNode.endpoints[1].bind(CLUSTER.ON_OFF.NAME, new MyOnOffBoundCluster(this));
+        
+        // ========================================
+        // HANDLE cmdId 11 (0x0B) - protocolDataResponse
+        // ========================================
+        // Use event listener for manufacturer-specific command
+        // This is the CORRECT way to handle manufacturer-specific server-to-client commands!
+        
+        const sonoffCluster = this.zclNode.endpoints[1].clusters.SonoffCluster;
+        
+        // CRITICAL: Set manufacturerId permanently on cluster instance
+        // Required for zigbee-clusters to recognize manufacturer-specific commands
+        sonoffCluster.manufacturerId = 0x1286;
+        
+        // Register event listener for protocolDataResponse (cmdId 11)
+        sonoffCluster.on('protocolDataResponse', (payload) => {
+            this.log('ZBMINIR2: Received protocolDataResponse (cmdId 11)');
+            
+            if (payload && payload.data && Buffer.isBuffer(payload.data)) {
+                const buffer = payload.data;
+                const cmdType = buffer[0];
+                const status = buffer.length > 1 ? buffer[1] : null;
+                
+                this.log(`  Command type: 0x${cmdType.toString(16)}`);
+                this.log(`  Status: 0x${status !== null ? status.toString(16) : 'N/A'} (${status === 0x00 ? 'SUCCESS' : 'FAILURE'})`);
+                this.log(`  Raw data: ${buffer.toString('hex')}`);
+                
+                // Parse based on command type
+                switch (cmdType) {
+                    case 0x01:
+                        // Response to protocolData command (inching, etc)
+                        if (status === 0x00) {
+                            this.log('  Inching command executed successfully');
+                        } else if (status === 0x81) {
+                            this.log('  Inching rejected by firmware (check: detach_mode=false, compatible switch_mode, relay state)');
+                        } else {
+                            this.error(`  Inching failed with status=0x${status !== null ? status.toString(16) : 'unknown'}`);
+                        }
+                        break;
+                    default:
+                        this.log(`  Unknown command type: 0x${cmdType.toString(16)}`);
+                }
+            } else {
+                this.log('  Received protocolDataResponse but no data');
+            }
+        });
+        
+        this.log('ZBMINIR2: protocolDataResponse event listener registered');
+        
+        // ========================================
+        // END cmdId 11 handler
+        // ========================================
         
         // Read initial attributes from device
         this.checkAttributes();
         
-        // Apply initial inching settings
+        // Apply initial inching settings if defined
         const settings = this.getSettings();
         if (settings.inching_enabled !== undefined) {
             try {
@@ -99,22 +153,16 @@ class SonoffZBMINIR2 extends SonoffBase {
 
     /**
      * Convert TurboMode raw value (radioPower) to boolean
-     * @param {number} rawValue - Raw attribute value from device (9 or 20)
-     * @returns {boolean} true if turbo mode is active
      */
     _parseTurboMode(rawValue) {
-        // Accept 0x14/20 or true/1 as "on"
         if (rawValue === TURBO_MODE_VALUES.ON || rawValue === true || rawValue === 1) {
             return true;
         }
-        // Any other value (including 0x09/9) is considered "off"
         return false;
     }
 
     /**
      * Convert boolean to TurboMode raw value (radioPower)
-     * @param {boolean} enabled - Desired turbo mode state
-     * @returns {number} Value to send to device (9 or 20)
      */
     _formatTurboMode(enabled) {
         return enabled ? TURBO_MODE_VALUES.ON : TURBO_MODE_VALUES.OFF;
@@ -122,8 +170,6 @@ class SonoffZBMINIR2 extends SonoffBase {
 
     /**
      * Convert switch_mode string to number (for writing to device)
-     * @param {string} mode - Mode string from settings ("0", "1", "2", "130")
-     * @returns {number} Numeric mode value
      */
     _formatSwitchMode(mode) {
         return parseInt(mode, 10);
@@ -131,8 +177,6 @@ class SonoffZBMINIR2 extends SonoffBase {
 
     /**
      * Convert switch_mode number to string (for reading from device)
-     * @param {number} mode - Mode number from device (0, 1, 2, 130)
-     * @returns {string} String mode value for settings
      */
     _parseSwitchMode(mode) {
         return String(mode);
@@ -140,20 +184,15 @@ class SonoffZBMINIR2 extends SonoffBase {
 
     /**
      * onSettings is called when the user updates the device's settings.
-     * @param {object} event the onSettings event data
-     * @param {object} event.oldSettings The old settings object
-     * @param {object} event.newSettings The new settings object
-     * @param {string[]} event.changedKeys An array of keys changed since the previous version
-     * @returns {Promise<string|void>} return a custom message that will be displayed
      */
     async onSettings({ oldSettings, newSettings, changedKeys }) {
         this.log('Settings changed:', changedKeys);
 
-        // Handle power-on behavior (OnOff cluster)
+        // Handle power-on behavior (OnOff cluster - standard Zigbee, no manufacturer code needed)
         if (changedKeys.includes("power_on_behavior")) {
             try {
-                await this.zclNode.endpoints[1].clusters.onOff.writeAttributes({ 
-                    powerOnBehavior: newSettings.power_on_behavior 
+                await this.zclNode.endpoints[1].clusters.onOff.writeAttributes({
+                    powerOnBehavior: newSettings.power_on_behavior
                 });
                 this.log('Power-on behavior updated successfully');
                 
@@ -178,9 +217,7 @@ class SonoffZBMINIR2 extends SonoffBase {
                 const rawValue = this._formatTurboMode(newSettings.TurboMode);
                 this.log(`Writing TurboMode: ${newSettings.TurboMode} → raw value: 0x${rawValue.toString(16)} (${rawValue})`);
                 
-                await this.zclNode.endpoints[1].clusters.SonoffCluster.writeAttributes({ 
-                    TurboMode: rawValue 
-                });
+                await this.writeAttribute(SonoffCluster, 'TurboMode', rawValue);
                 
                 this.log(`TurboMode updated successfully to ${newSettings.TurboMode}`);
             } catch (error) {
@@ -195,9 +232,7 @@ class SonoffZBMINIR2 extends SonoffBase {
                 const rawValue = this._formatSwitchMode(newSettings.switch_mode);
                 this.log(`Writing switch_mode: "${newSettings.switch_mode}" → raw value: ${rawValue}`);
                 
-                await this.zclNode.endpoints[1].clusters.SonoffCluster.writeAttributes({ 
-                    switch_mode: rawValue 
-                });
+                await this.writeAttribute(SonoffCluster, 'switch_mode', rawValue);
                 
                 this.log(`switch_mode updated successfully to ${newSettings.switch_mode}`);
             } catch (error) {
@@ -206,9 +241,9 @@ class SonoffZBMINIR2 extends SonoffBase {
             }
         }
 
-        // Handle other SonoffCluster attributes (excluding TurboMode and switch_mode which were already processed)
-        const otherSonoffKeys = changedKeys.filter(key => 
-            SonoffClusterAttributes.includes(key) && 
+        // Handle other SonoffCluster attributes
+        const otherSonoffKeys = changedKeys.filter(key =>
+            SonoffClusterAttributes.includes(key) &&
             key !== 'TurboMode' &&
             key !== 'switch_mode'
         );
@@ -239,10 +274,6 @@ class SonoffZBMINIR2 extends SonoffBase {
 
     /**
      * Set inching (auto-off/on) configuration
-     * Based on Zigbee2MQTT implementation (sonoff.ts)
-     * @param {boolean} enabled - Enable or disable inching
-     * @param {number} time - Time in seconds (0.5-3599.5)
-     * @param {string} mode - 'on' (turn ON then OFF) or 'off' (turn OFF then ON)
      */
     async setInching(enabled = false, time = 1, mode = 'on') {
         try {
@@ -291,7 +322,12 @@ class SonoffZBMINIR2 extends SonoffBase {
 
             await cluster.protocolData(
                 { data: payloadBuffer },
-                { disableDefaultResponse: true, waitForResponse: false }
+                { 
+                    disableDefaultResponse: true, 
+                    waitForResponse: false,
+                    manufacturerSpecific: true,
+                    manufacturerId: 0x1286
+                }
             );
             
             this.log('Inching command sent successfully');
