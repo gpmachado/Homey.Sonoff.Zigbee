@@ -1,8 +1,7 @@
 {
   "id": "SonoffZBMINIR2",
   "name": {
-    "en": "ZBMINI-R2 Switch",
-    "sv": "ZBMINI-R2 Strömbrytare"
+    "en": "ZBMINI-R2 Switch"
   },
   "class": "socket",
   "capabilities": [
@@ -19,7 +18,11 @@
       "1": {
         "clusters": [
           0,
+          3,
+          4,
           6,
+          2821,
+          64599,
           64529
         ],
         "bindings": [
