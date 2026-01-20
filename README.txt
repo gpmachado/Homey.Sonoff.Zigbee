@@ -15,6 +15,7 @@ Support devices:
 -Sonoff SNZB-06P (Presence detector)
 -Sonoff ZBCurtain (Curtain)
 -Sonoff ZBTRV    (Radiator valve)
+-Sonoff ZBMINI (Switch)
 -Sonoff ZBMINI-L (Switch)
 -Sonoff ZBMINI-L2 (Switch)
 -Sonoff RF/TX devices (send and receive)
